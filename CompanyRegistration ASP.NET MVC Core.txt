@@ -1,0 +1,198 @@
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Http;
+using Microsoft.EntityFrameworkCore;
+using System.Linq;
+using System.Threading.Tasks;
+using System.Collections.Generic;
+
+------------------------------------------------------------------------------------------------
+
+// Models
+public class User
+{
+    public int Id { get; set; }
+    public string Username { get; set; }
+    public string Password { get; set; }
+}
+
+public class Branch
+{
+    public int Id { get; set; }
+    public string Name { get; set; }
+}
+
+public class Department
+{
+    public int Id { get; set; }
+    public string Name { get; set; }
+    public int BranchId { get; set; }
+}
+
+------------------------------------------------------------------------------------------------------
+
+// Database Context
+public class ApplicationDbContext : DbContext
+{
+    public ApplicationDbContext(DbContextOptions<ApplicationDbContext> options) : base(options) { }
+
+    public DbSet<User> Users { get; set; }
+    public DbSet<Branch> Branches { get; set; }
+    public DbSet<Department> Departments { get; set; }
+}
+
+----------------------------------------------------------------------------------------
+
+// Account Controller
+public class AccountController : Controller
+{
+    private readonly ApplicationDbContext _context;
+
+    public AccountController(ApplicationDbContext context)
+    {
+        _context = context;
+    }
+
+    public IActionResult Login() => View();
+    public IActionResult Register() => View();
+
+    [HttpPost]
+    public async Task<IActionResult> Register(User model)
+    {
+        if (_context.Users.Any(u => u.Username == model.Username))
+        {
+            ModelState.AddModelError("", "Username already exists.");
+            return View(model);
+        }
+
+        _context.Users.Add(model);
+        await _context.SaveChangesAsync();
+        HttpContext.Session.SetString("Username", model.Username);
+        return RedirectToAction("Index", "Dashboard");
+    }
+
+    [HttpPost]
+    public IActionResult Login(User model)
+    {
+        var user = _context.Users.FirstOrDefault(u => u.Username == model.Username && u.Password == model.Password);
+
+        if (user == null)
+        {
+            ModelState.AddModelError("", "Invalid login credentials.");
+            return View(model);
+        }
+
+        HttpContext.Session.SetString("Username", user.Username);
+        return RedirectToAction("Index", "Dashboard");
+    }
+
+    public IActionResult Logout()
+    {
+        HttpContext.Session.Clear();
+        return RedirectToAction("Login");
+    }
+}
+
+----------------------------------------------------------------------------------------------------------
+
+// Dashboard Controller
+public class DashboardController : Controller
+{
+    private readonly ApplicationDbContext _context;
+
+    public DashboardController(ApplicationDbContext context)
+    {
+        _context = context;
+    }
+
+    public async Task<IActionResult> Index()
+    {
+        if (string.IsNullOrEmpty(HttpContext.Session.GetString("Username")))
+            return RedirectToAction("Login", "Account");
+
+        var branches = await _context.Branches.ToListAsync();
+        return View(branches);
+    }
+
+    public async Task<IActionResult> Departments(int branchId)
+    {
+        var branch = await _context.Branches.FindAsync(branchId);
+        var departments = await _context.Departments.Where(d => d.BranchId == branchId).ToListAsync();
+        
+        ViewBag.Branch = branch;
+        return View(departments);
+    }
+}
+
+-----------------------------------------------------------------------------------------------------
+
+// Program.cs Configuration
+var builder = WebApplication.CreateBuilder(args);
+builder.Services.AddDbContext<ApplicationDbContext>(options => options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
+builder.Services.AddControllersWithViews();
+builder.Services.AddSession();
+
+var app = builder.Build();
+app.UseHttpsRedirection();
+app.UseStaticFiles();
+app.UseRouting();
+app.UseAuthorization();
+app.UseSession();
+app.MapControllerRoute(name: "default", pattern: "{controller=Account}/{action=Login}/{id?}");
+app.Run();
+
+--------------------------------------------------------------------------------------------------
+// Views
+
+// Views/Account/Login.cshtml
+@model User
+<h2>Login</h2>
+<form method="post">
+    <label>Username:</label>
+    <input type="text" name="Username" required />
+    <label>Password:</label>
+    <input type="password" name="Password" required />
+    <button type="submit">Login</button>
+    <a asp-action="Register">Register</a>
+</form>
+
+---------------------------------------------------------------
+
+// Views/Account/Register.cshtml
+@model User
+<h2>Register</h2>
+<form method="post">
+    <label>Username:</label>
+    <input type="text" name="Username" required />
+    <label>Password:</label>
+    <input type="password" name="Password" required />
+    <button type="submit">Register</button>
+</form>
+
+------------------------------------------------------------------
+
+// Views/Dashboard/Index.cshtml
+@model List<Branch>
+<h2>Welcome, @Context.Session.GetString("Username")!</h2>
+<a asp-controller="Account" asp-action="Logout">Logout</a>
+<h3>Branches</h3>
+<ul>
+    @foreach (var branch in Model)
+    {
+        <li>
+            <a asp-action="Departments" asp-route-branchId="@branch.Id">@branch.Name</a>
+        </li>
+    }
+</ul>
+
+-----------------------------------------------------------------------
+
+// Views/Dashboard/Departments.cshtml
+@model List<Department>
+<h2>@ViewBag.Branch.Name - Departments</h2>
+<a asp-action="Index">Back to Branches</a>
+<ul>
+    @foreach (var department in Model)
+    {
+        <li>@department.Name</li>
+    }
+</ul>
